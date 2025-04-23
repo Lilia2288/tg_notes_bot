@@ -15,7 +15,6 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 from config import TOKEN
 
-# ──────────────────────── 1. Ініціалізація ────────────────────────
 bot = Bot(
     token=TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -23,7 +22,6 @@ bot = Bot(
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# ───────────────────────── 2. “База даних” ─────────────────────────
 db_file = Path("db.json")
 
 
@@ -39,21 +37,18 @@ def write_db(data: dict) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-# ───────────────────────── 3. Клавіатури ──────────────────────────
 builder = ReplyKeyboardBuilder()
 builder.button(text="/new")
 builder.button(text="/notes")
-builder.adjust(2)                      # 2 кнопки в ряд
+builder.adjust(2)
 main_keyboard = builder.as_markup(resize_keyboard=True)
 
-# ───────────────────────── 4. FSM-форма ───────────────────────────
 class NoteForm(StatesGroup):
     title = State()
     description = State()
     remind_at = State()
 
 
-# ───────────────────────── 5. Хендлери ────────────────────────────
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -127,7 +122,6 @@ async def cmd_notes(message: types.Message):
     await message.answer(text)
 
 
-# ─────────────── 6. Фоновий воркер-нагадувач ──────────────────────
 async def reminder_worker() -> None:
     while True:
         db = read_db()
@@ -154,6 +148,5 @@ async def on_startup(dispatcher: Dispatcher) -> None:
     asyncio.create_task(reminder_worker())
 
 
-# ────────────────────────── 7. Запуск ─────────────────────────────
 if __name__ == "__main__":
     asyncio.run(dp.start_polling(bot, on_startup=on_startup))
