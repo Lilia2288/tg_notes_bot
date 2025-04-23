@@ -1,8 +1,8 @@
 import json
 import asyncio
+import logging
 from pathlib import Path
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
@@ -15,46 +15,58 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder
 
 from config import TOKEN
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 bot = Bot(
     token=TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
 )
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+dp = Dispatcher(storage=MemoryStorage())
 
 DB_FILE = Path("db.json")
+# ─────────────────────── 1. Логи ────────────────────────
 
 def read_db() -> dict:
     if not DB_FILE.exists():
+# ─────────────────────── 2. Бот, dp ─────────────────────
         return {}
     with DB_FILE.open(encoding="utf-8") as f:
         return json.load(f)
 
 def write_db(data: dict) -> None:
     with DB_FILE.open("w", encoding="utf-8") as f:
+# ─────────────────────── 3. “База даних” ────────────────
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-kb_builder = ReplyKeyboardBuilder()
-kb_builder.button(text="/new")
-kb_builder.button(text="/notes")
-kb_builder.adjust(2)
-MAIN_KB = kb_builder.as_markup(resize_keyboard=True)
+
+kb = ReplyKeyboardBuilder()
+kb.button(text="/new")
+kb.button(text="/notes")
+kb.adjust(2)
+MAIN_KB = kb.as_markup(resize_keyboard=True)
+
 
 class NoteForm(StatesGroup):
     title = State()
     description = State()
     remind_at = State()
 
+# ─────────────────────── 4. Клавіатура ──────────────────
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
         "Привіт!\n/new – створити нотатку\n/notes – показати усі нотатки",
+# ─────────────────────── 5. FSM ────────────────────────
         reply_markup=MAIN_KB,
     )
 
 @dp.message(Command("new"))
 async def cmd_new(message: types.Message, state: FSMContext):
+
+# ─────────────────────── 6. Хендлери ───────────────────
     await state.clear()
     await message.answer("Введи назву нотатки:")
     await state.set_state(NoteForm.title)
@@ -63,18 +75,21 @@ async def cmd_new(message: types.Message, state: FSMContext):
 async def note_title(message: types.Message, state: FSMContext):
     await state.update_data(title=message.text)
     await message.answer("Введи опис нотатки:")
+
     await state.set_state(NoteForm.description)
 
 @dp.message(StateFilter(NoteForm.description))
 async def note_description(message: types.Message, state: FSMContext):
     await state.update_data(description=message.text)
     await message.answer(
+
         "Введи дату й час у форматі YYYY-MM-DD HH:MM "
         "(наприклад 2025-03-29 17:30):"
     )
     await state.set_state(NoteForm.remind_at)
 
 @dp.message(StateFilter(NoteForm.remind_at))
+
 async def note_time(message: types.Message, state: FSMContext):
     try:
         remind_time = datetime.strptime(message.text, "%Y-%m-%d %H:%M")
@@ -84,6 +99,7 @@ async def note_time(message: types.Message, state: FSMContext):
 
     data = await state.get_data()
     user_id = str(message.from_user.id)
+
 
     db = read_db()
     db.setdefault(user_id, []).append(
@@ -98,6 +114,7 @@ async def note_time(message: types.Message, state: FSMContext):
 
     await message.answer("Нотатку збережено ✅")
     await state.clear()
+
 
 @dp.message(Command("notes"))
 async def cmd_notes(message: types.Message):
@@ -114,12 +131,22 @@ async def cmd_notes(message: types.Message):
     )
     await message.answer(text)
 
-KYIV_TZ = ZoneInfo("Europe/Kyiv")
+
+# ─────────────────────── 7. Воркер-нагадувач ───────────
+try:
+    from zoneinfo import ZoneInfo
+
+    KYIV_TZ = ZoneInfo("Europe/Kyiv")
+except Exception:
+    KYIV_TZ = None
+    logger.warning("tzdata не знайдено — використовую системний час.")
 
 async def reminder_worker() -> None:
     while True:
+        now_dt = datetime.now(KYIV_TZ) if KYIV_TZ else datetime.now()
+        now = now_dt.strftime("%Y-%m-%d %H:%M")
+
         db = read_db()
-        now = datetime.now(KYIV_TZ).strftime("%Y-%m-%d %H:%M")
         changed = False
 
         for user_id, notes in db.items():
@@ -135,10 +162,20 @@ async def reminder_worker() -> None:
         if changed:
             write_db(db)
 
-        await asyncio.sleep(60)
+        await asyncio.sleep(60)  # раз на хвилину
 
-async def on_startup(bot: Bot) -> None:
+
+# ─────────────────────── 8. Стартовий хук ─────────────────
+@dp.startup()
+async def _startup() -> None:  # <-­ без аргументів
     asyncio.create_task(reminder_worker())
+    logger.info("Reminder worker запущено")
+
+
+# ─────────────────────── 9. Запуск ───────────────────────
+async def main() -> None:
+    await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
-    asyncio.run(dp.start_polling(bot, on_startup=on_startup))
+    asyncio.run(main())
